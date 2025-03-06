@@ -1,6 +1,6 @@
 import fastify from 'fastify';
 import cors from '@fastify/cors';
-import { streamText } from 'ai';
+import { streamText, createDataStreamResponse } from 'ai';
 import dotenv from 'dotenv';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { promises as fs } from 'fs';
@@ -117,37 +117,47 @@ server.post('/api/streaming-data', async (request, reply) => {
       }
     });
 
-    // Server-Sent Events (SSE)のためのヘッダーを設定
-    // これにより、クライアントはイベントストリームを受信できる
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream', // SSEのコンテンツタイプ
-      'Cache-Control': 'no-cache', // キャッシュを無効化
-      'Connection': 'keep-alive', // 接続を維持
-      'Access-Control-Allow-Origin': '*', // CORSを許可
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+    // Vercel AI SDKのレスポンスを作成
+    const response = createDataStreamResponse({
+      execute: async (dataStream) => {
+        // カスタムデータを送信
+        dataStream.writeData(customData);
+        
+        // テキストストリームを処理
+        for await (const chunk of result.textStream) {
+          // テキストチャンクを書き込む（正しいフォーマットで）
+          dataStream.write(`0:${JSON.stringify(chunk)}\n`);
+        }
+      },
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'X-Accel-Buffering': 'no'
+      }
     });
-    
-    // カスタムデータをSSEイベントとして送信
-    // 'event: customData'でイベント名を指定し、データをJSON形式で送信
-    reply.raw.write(`event: customData\ndata: ${JSON.stringify(customData)}\n\n`);
 
-    // テキストストリームを取得
-    // result.textStreamはAsyncIterableで、AIからの応答が小さなチャンクで届く
-    const { textStream } = result;
+    // Fastifyのreplyオブジェクトを使用して、レスポンスを返す
+    reply.raw.writeHead(response.status, Object.fromEntries(response.headers.entries()));
     
-    // テキストをチャンクごとに送信
-    // for await...ofループを使用して、ストリームからチャンクを順次取得
-    for await (const chunk of textStream) {
-      // 各チャンクをSSEイベントとしてクライアントに送信
-      // 'data:'プレフィックスはSSEの標準形式
-      reply.raw.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+    if (response.body) {
+      const reader = response.body.getReader();
+      const pump = async () => {
+        const { done, value } = await reader.read();
+        if (done) {
+          reply.raw.end();
+          return;
+        }
+        reply.raw.write(value);
+        return pump();
+      };
+      await pump();
+    } else {
+      reply.raw.end();
     }
-
-    // ストリームの終了を通知
-    // '[DONE]'はストリームの終了を示す特別なマーカー
-    reply.raw.write('data: [DONE]\n\n');
-    reply.raw.end(); // レスポンスを終了
     
   } catch (error) {
     console.error('Error:', error);
@@ -224,31 +234,47 @@ server.get('/api/streaming-data', async (request, reply) => {
       }
     });
 
-    // SSEのためのヘッダーを設定
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS', // GETメソッドを許可
-      'Access-Control-Allow-Headers': 'Content-Type'
+    // データストリームレスポンスを作成
+    const response = createDataStreamResponse({
+      execute: async (dataStream) => {
+        // カスタムデータを送信
+        dataStream.writeData(customData);
+        
+        // テキストストリームを処理
+        for await (const chunk of result.textStream) {
+          // テキストチャンクを書き込む（正しいフォーマットで）
+          dataStream.write(`0:${JSON.stringify(chunk)}\n`);
+        }
+      },
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS', // GETメソッドを許可
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'X-Accel-Buffering': 'no'
+      }
     });
-    
-    // カスタムデータをSSEイベントとして送信
-    reply.raw.write(`event: customData\ndata: ${JSON.stringify(customData)}\n\n`);
 
-    // テキストストリームを取得
-    const { textStream } = result;
+    // Fastifyのreplyオブジェクトを使用して、レスポンスを返す
+    reply.raw.writeHead(response.status, Object.fromEntries(response.headers.entries()));
     
-    // テキストをチャンクごとに送信
-    for await (const chunk of textStream) {
-      // 各チャンクをSSEイベントとしてクライアントに送信
-      reply.raw.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+    if (response.body) {
+      const reader = response.body.getReader();
+      const pump = async () => {
+        const { done, value } = await reader.read();
+        if (done) {
+          reply.raw.end();
+          return;
+        }
+        reply.raw.write(value);
+        return pump();
+      };
+      await pump();
+    } else {
+      reply.raw.end();
     }
-
-    // ストリームの終了を通知
-    reply.raw.write('data: [DONE]\n\n');
-    reply.raw.end();
     
   } catch (error) {
     console.error('Error:', error);
