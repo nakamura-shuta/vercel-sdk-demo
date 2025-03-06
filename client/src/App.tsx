@@ -3,38 +3,45 @@ import { useCompletion } from '@ai-sdk/react';
 import './App.css';
 
 // 参考ドキュメントの型定義
+// APIから返される参考リンク情報の型
 interface Reference {
   title: string;
   url: string;
 }
 
 // カスタムデータの型定義
+// サーバーから送信されるカスタムイベントデータの型
 interface CustomData {
-  timestamp: string;
-  source: string;
-  prompt: string;
-  model: string;
-  references: Reference[];
+  timestamp: string; // レスポンス生成時のタイムスタンプ
+  source: string;    // データソース情報
+  prompt: string;    // ユーザーが入力したプロンプト
+  model: string;     // 使用されたAIモデル
+  references: Reference[]; // 参考ドキュメントのリスト
 }
 
 function App() {
-  const [customData, setCustomData] = useState<CustomData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [streamData, setStreamData] = useState<any[]>([]);
-  const [eventSourceActive, setEventSourceActive] = useState<boolean>(false);
-  const [aiResponse, setAiResponse] = useState<string>('');
-  const streamDataRef = useRef<HTMLDivElement>(null);
-  const customDataRef = useRef<HTMLDivElement>(null);
+  // 状態管理用のステート
+  const [customData, setCustomData] = useState<CustomData | null>(null); // カスタムデータを保持
+  const [error, setError] = useState<string | null>(null); // エラーメッセージを保持
+  const [streamData, setStreamData] = useState<any[]>([]); // ストリーミングデータの履歴を保持
+  const [eventSourceActive, setEventSourceActive] = useState<boolean>(false); // EventSourceの状態を管理
+  const [aiResponse, setAiResponse] = useState<string>(''); // AIの完全な応答テキストを保持
+  
+  // DOM参照用のref
+  const streamDataRef = useRef<HTMLDivElement>(null); // ストリームデータ表示領域へのref
+  const customDataRef = useRef<HTMLDivElement>(null); // カスタムデータ表示領域へのref
 
+  // Vercel AI SDKのuseCompletionフックを使用
+  // このフックはAIモデルとの対話を管理する
   const {
-    completion,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-    data
+    completion,    // 現在の完了テキスト
+    input,         // 入力フィールドの値
+    handleInputChange, // 入力変更ハンドラ
+    handleSubmit,  // フォーム送信ハンドラ
+    isLoading,     // ローディング状態
+    data           // 完了データ
   } = useCompletion({
-    api: 'http://localhost:3001/api/streaming-data',
+    api: 'http://localhost:3001/api/streaming-data', // APIエンドポイント
     headers: {
       'Content-Type': 'application/json',
     },
@@ -42,14 +49,17 @@ function App() {
       // 追加のパラメータがあれば設定できます
     },
     onFinish: () => {
+      // ストリームが完了したときの処理
       console.log('Stream finished');
     },
     onError: (error) => {
+      // エラー発生時の処理
       console.error('Error:', error);
       setError(`エラーが発生しました: ${error.message || 'Unknown error'}`);
     },
     // @ts-ignore - onData is available but not in the type definition
     onData: (newData: any) => {
+      // 新しいデータを受信したときの処理
       console.log('Received data:', newData);
       // カスタムデータを処理
       if (newData && Array.isArray(newData)) {
@@ -59,6 +69,7 @@ function App() {
   });
 
   // スクロールを最下部に移動する関数
+  // ストリームデータやAIレスポンスが更新されたときに自動スクロール
   useEffect(() => {
     if (streamDataRef.current) {
       streamDataRef.current.scrollTop = streamDataRef.current.scrollHeight;
@@ -73,17 +84,21 @@ function App() {
   }, [customData]);
 
   // EventSourceを使用してカスタムイベントを受信する
+  // Server-Sent Events (SSE)を使用してサーバーからのストリーミングデータを受信
   useEffect(() => {
     let eventSource: EventSource | null = null;
     
     if (input && eventSourceActive) {
       // プロンプトをクエリパラメータとして追加
+      // GETリクエストでEventSourceを初期化
       const url = `http://localhost:3001/api/streaming-data?prompt=${encodeURIComponent(input)}`;
       eventSource = new EventSource(url);
       
       // カスタムデータイベントを処理
+      // サーバーから送信される'customData'という名前のイベントをリッスン
       eventSource.addEventListener('customData', (event) => {
         try {
+          // イベントデータをJSONとしてパース
           const data = JSON.parse(event.data) as CustomData;
           console.log('Custom data received:', data);
           setCustomData(data);
@@ -93,22 +108,25 @@ function App() {
       });
       
       // 通常のデータイベントを処理
+      // 名前のないデータイベントはonmessageで受信
       eventSource.onmessage = (event) => {
         try {
+          // ストリーム終了の特殊マーカーを確認
           if (event.data === '[DONE]') {
             if (eventSource) {
-              eventSource.close();
+              eventSource.close(); // ストリームが完了したらEventSourceを閉じる
               setEventSourceActive(false);
             }
             return;
           }
           
+          // データをJSONとしてパース
           const data = JSON.parse(event.data);
           if (data.text) {
             console.log('Text chunk received:', data.text);
             // テキストチャンクを処理
-            setStreamData(prev => [...prev, data]);
-            // AIの回答を蓄積
+            setStreamData(prev => [...prev, data]); // ストリームデータ履歴に追加
+            // AIの回答を蓄積（チャンクを連結）
             setAiResponse(prev => prev + data.text);
           }
         } catch (error) {
@@ -128,6 +146,7 @@ function App() {
     }
     
     // クリーンアップ関数
+    // コンポーネントがアンマウントされたときにEventSourceを閉じる
     return () => {
       if (eventSource) {
         eventSource.close();
@@ -135,6 +154,7 @@ function App() {
     };
   }, [input, eventSourceActive]);
 
+  // フォーム送信ハンドラ
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null); // エラーをリセット
@@ -143,6 +163,7 @@ function App() {
     setAiResponse(''); // AIの回答をリセット
     
     // EventSourceを使用する場合
+    // このフラグをtrueに設定すると、useEffectでEventSourceが初期化される
     setEventSourceActive(true);
   };
 
@@ -168,6 +189,7 @@ function App() {
     <div className="app-container">
       <h1>Vercel AI SDK + AWS Bedrock ストリーミングデータのデモ</h1>
       
+      {/* エラーメッセージの表示 */}
       {error && (
         <div className="error-container">
           <p className="error-message">{error}</p>
@@ -178,6 +200,7 @@ function App() {
         </div>
       )}
       
+      {/* AIの回答を表示するセクション */}
       <div className="completion-container">
         <h2>AIの回答:</h2>
         <div className="completion-box" ref={streamDataRef}>
@@ -195,12 +218,14 @@ function App() {
         </div>
       </div>
 
+      {/* 参考ドキュメントリンクの表示 */}
       {customData && customData.references && (
         <div className="references-container">
           <ReferenceLinks references={customData.references} />
         </div>
       )}
 
+      {/* ストリーミングデータの表示（デバッグ用） */}
       <div className="data-container">
         <h2>ストリーミングデータ:</h2>
         <div className="data-box">
@@ -212,6 +237,7 @@ function App() {
         </div>
       </div>
 
+      {/* カスタムデータの表示（デバッグ用） */}
       <div className="custom-data-container">
         <h2>カスタムデータ処理:</h2>
         <div className="data-box" ref={customDataRef}>
@@ -223,6 +249,7 @@ function App() {
         </div>
       </div>
 
+      {/* 入力フォーム */}
       <form onSubmit={handleFormSubmit} className="input-form">
         <input
           value={input}
