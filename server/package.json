@@ -1,0 +1,30 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "dev": "nodemon --exec ts-node server.ts",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^2.0.6",
+    "@ai-sdk/openai": "^1.0.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
+    "@aws-sdk/credential-providers": "^3.758.0",
+    "@fastify/cors": "^8.0.0",
+    "ai": "^4.1.53",
+    "dotenv": "^16.0.0",
+    "fastify": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "nodemon": "^3.0.0",
+    "ts-node": "^10.0.0",
+    "typescript": "^5.0.0"
+  }
+}
