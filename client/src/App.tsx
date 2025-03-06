@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useCompletion } from 'ai/react';
+import { useCompletion } from '@ai-sdk/react';
 import './App.css';
 
 // 参考ドキュメントの型定義

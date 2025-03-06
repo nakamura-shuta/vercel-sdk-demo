@@ -94,6 +94,12 @@ server.post('/api/streaming-data', async (request, reply) => {
       model: bedrockProvider('anthropic.claude-3-5-sonnet-20240620-v1:0'),
       // ユーザーからのメッセージを設定
       messages: [{ role: 'user', content: prompt }],
+      // チャンク受信時に呼び出されるコールバック
+      onChunk: ({ chunk }) => {
+        if (chunk.type === 'text-delta') {
+          console.log(`Received text chunk: ${chunk.textDelta.substring(0, 20)}...`);
+        }
+      },
       // ストリーミング完了時に呼び出されるコールバック
       onFinish: async ({ response }) => {
         try {
@@ -123,11 +129,14 @@ server.post('/api/streaming-data', async (request, reply) => {
         // カスタムデータを送信
         dataStream.writeData(customData);
         
-        // テキストストリームを処理
-        for await (const chunk of result.textStream) {
-          // テキストチャンクを書き込む（正しいフォーマットで）
-          dataStream.write(`0:${JSON.stringify(chunk)}\n`);
-        }
+        // 処理開始のメッセージアノテーションを送信
+        dataStream.writeMessageAnnotation({ 
+          status: 'processing',
+          timestamp: new Date().toISOString()
+        });
+        
+        // テキストストリームをマージ（より簡潔な方法）
+        result.mergeIntoDataStream(dataStream);
       },
       headers: {
         'Content-Type': 'text/event-stream',
@@ -137,6 +146,13 @@ server.post('/api/streaming-data', async (request, reply) => {
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
         'X-Accel-Buffering': 'no'
+      },
+      onError: (error) => {
+        // エラーメッセージをカスタマイズ
+        console.error('Streaming error:', error);
+        return error instanceof Error 
+          ? `エラーが発生しました: ${error.message}` 
+          : `エラーが発生しました: ${String(error)}`;
       }
     });
 
@@ -211,6 +227,12 @@ server.get('/api/streaming-data', async (request, reply) => {
     const result = await streamText({
       model: bedrockProvider('anthropic.claude-3-sonnet-20240229-v1:0'), // Claude 3 Sonnetモデルを使用
       messages: [{ role: 'user', content: prompt }],
+      // チャンク受信時に呼び出されるコールバック
+      onChunk: ({ chunk }) => {
+        if (chunk.type === 'text-delta') {
+          console.log(`Received text chunk: ${chunk.textDelta.substring(0, 20)}...`);
+        }
+      },
       // ストリーミング完了時に呼び出されるコールバック
       onFinish: async ({ response }) => {
         try {
@@ -240,11 +262,14 @@ server.get('/api/streaming-data', async (request, reply) => {
         // カスタムデータを送信
         dataStream.writeData(customData);
         
-        // テキストストリームを処理
-        for await (const chunk of result.textStream) {
-          // テキストチャンクを書き込む（正しいフォーマットで）
-          dataStream.write(`0:${JSON.stringify(chunk)}\n`);
-        }
+        // 処理開始のメッセージアノテーションを送信
+        dataStream.writeMessageAnnotation({ 
+          status: 'processing',
+          timestamp: new Date().toISOString()
+        });
+        
+        // テキストストリームをマージ（より簡潔な方法）
+        result.mergeIntoDataStream(dataStream);
       },
       headers: {
         'Content-Type': 'text/event-stream',
@@ -254,6 +279,13 @@ server.get('/api/streaming-data', async (request, reply) => {
         'Access-Control-Allow-Methods': 'GET, OPTIONS', // GETメソッドを許可
         'Access-Control-Allow-Headers': 'Content-Type',
         'X-Accel-Buffering': 'no'
+      },
+      onError: (error) => {
+        // エラーメッセージをカスタマイズ
+        console.error('Streaming error:', error);
+        return error instanceof Error 
+          ? `エラーが発生しました: ${error.message}` 
+          : `エラーが発生しました: ${String(error)}`;
       }
     });
 
