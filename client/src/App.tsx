@@ -321,8 +321,24 @@ function App() {
     // エラーをリセット
     setError(null);
     
-    // フォームを送信
-    handleSubmit(e);
+    // サンプル参照ドキュメント情報
+    const sampleReferences: Reference[] = [
+      {
+        title: 'Vercel AI SDK ドキュメント',
+        url: 'https://sdk.vercel.ai/docs'
+      },
+      {
+        title: 'AWS Bedrock ドキュメント',
+        url: 'https://docs.aws.amazon.com/bedrock/'
+      }
+    ];
+    
+    // フォームを送信（参照ドキュメント情報を含める）
+    handleSubmit(e, {
+      body: {
+        references: sampleReferences
+      }
+    });
   };
 
   // トグルハンドラ

@@ -22,6 +22,67 @@ const LOG_DIR = path.join(__dirname, 'logs');
   }
 })();
 
+// プロンプトテンプレート関数
+// 参照ドキュメント情報と会話履歴を組み込んだプロンプトを生成
+interface ReferenceDoc {
+  title: string;
+  url: string;
+  content?: string;
+}
+
+/**
+ * システムプロンプトを生成する関数
+ * @param references 参照ドキュメント情報の配列
+ * @returns システムプロンプト
+ */
+function generateSystemPrompt(references: ReferenceDoc[] = []): string {
+  // 基本的なシステムプロンプト
+  let systemPrompt = `あなたは優秀なAIアシスタントです。ユーザーの質問に対して、正確で役立つ回答を提供してください。
+回答は簡潔かつ分かりやすく、必要に応じて例を含めてください。`;
+
+  // 参照ドキュメントがある場合は、それらの情報を追加
+  if (references.length > 0) {
+    systemPrompt += `\n\n以下の参照ドキュメントを使用して回答を作成してください：\n`;
+    
+    references.forEach((doc, index) => {
+      systemPrompt += `\n[${index + 1}] ${doc.title} (${doc.url})`;
+      if (doc.content) {
+        systemPrompt += `\n内容: ${doc.content}\n`;
+      }
+    });
+    
+    systemPrompt += `\n参照ドキュメントの情報を活用し、適切な場合は引用元を明示してください。`;
+  }
+
+  return systemPrompt;
+}
+
+/**
+ * メッセージ配列にシステムプロンプトを追加する関数
+ * @param messages ユーザーとアシスタントのメッセージ配列
+ * @param references 参照ドキュメント情報の配列
+ * @returns システムプロンプトを含むメッセージ配列
+ */
+function addSystemPromptToMessages(
+  messages: Array<{ role: 'user' | 'assistant' | 'system', content: string }>, 
+  references: ReferenceDoc[] = []
+): Array<{ role: 'user' | 'assistant' | 'system', content: string }> {
+  const systemPrompt = generateSystemPrompt(references);
+  
+  // システムプロンプトがすでに存在するか確認
+  const hasSystemPrompt = messages.some(msg => msg.role === 'system');
+  
+  if (hasSystemPrompt) {
+    // 既存のシステムプロンプトを置き換え
+    return messages.map(msg => 
+      msg.role === 'system' ? { role: 'system' as const, content: systemPrompt } : msg
+    );
+  } else {
+    // 新しいシステムプロンプトを先頭に追加
+    return [{ role: 'system' as const, content: systemPrompt }, ...messages];
+  }
+}
+
 // 会話履歴をファイルに保存する関数
 async function saveConversationToFile(sessionId: string, data: any) {
   try {
@@ -52,8 +113,12 @@ server.register(cors, {
  */
 server.post('/api/streaming-data', async (request, reply) => {
   try {
-    // リクエストボディからプロンプトを取得
-    const { prompt, messages } = request.body as { prompt?: string, messages?: Array<{ role: string, content: string }> };
+    // リクエストボディからプロンプト、メッセージ、参照ドキュメントを取得
+    const { prompt, messages, references } = request.body as { 
+      prompt?: string, 
+      messages?: Array<{ role: string, content: string }>,
+      references?: ReferenceDoc[]
+    };
     
     // プロンプトまたはメッセージが必要
     if (!prompt && (!messages || messages.length === 0)) {
@@ -67,9 +132,37 @@ server.post('/api/streaming-data', async (request, reply) => {
       : (prompt as string);
 
     // メッセージ配列を使用するか、プロンプトからメッセージ配列を作成
-    const messageArray = messages ? 
+    let messageArray = messages ? 
       messages.map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })) : 
       [{ role: 'user' as const, content: prompt as string }];
+    
+    // システムプロンプトを追加
+    messageArray = addSystemPromptToMessages(messageArray, references || []) as typeof messageArray;
+    
+    // デバッグ用：システムプロンプトと参照ドキュメント情報をログに出力
+    console.log('\n=== 参照ドキュメント情報 ===');
+    if (references && references.length > 0) {
+      console.log(`${references.length}件の参照ドキュメントが指定されています：`);
+      references.forEach((ref, idx) => {
+        console.log(`[${idx + 1}] ${ref.title} (${ref.url})`);
+        if (ref.content) {
+          console.log(`  内容プレビュー: ${ref.content.substring(0, 50)}...`);
+        }
+      });
+    } else {
+      console.log('参照ドキュメントはありません');
+    }
+    
+    // システムプロンプトを取得して出力
+    const systemMsg = messageArray.find(msg => msg.role === 'system');
+    if (systemMsg) {
+      console.log('\n=== システムプロンプト ===');
+      console.log(systemMsg.content);
+    }
+    
+    console.log('\n=== メッセージ配列 ===');
+    console.log(JSON.stringify(messageArray, null, 2));
+    console.log('========================\n');
     
     // セッションIDを生成（単純なタイムスタンプベース）
     const sessionId = `session_${Date.now()}`;
@@ -95,11 +188,15 @@ server.post('/api/streaming-data', async (request, reply) => {
       prompt: userInput, // ユーザーの入力内容
       model: 'Claude 3.5 Sonnet', // 使用しているモデル
       sessionId: sessionId, // セッションID
-      references: [
+      references: (references || [
         { title: 'AWS Bedrock Documentation', url: 'https://docs.aws.amazon.com/bedrock/' },
         { title: 'Claude API Reference', url: 'https://docs.anthropic.com/claude/reference/' },
         { title: 'Fastify Documentation', url: 'https://www.fastify.io/docs/latest/' }
-      ]
+      ]).map(ref => ({
+        title: ref.title,
+        url: ref.url,
+        ...(ref.content ? { content: ref.content } : {})
+      }))
     };
 
     // ストリーミングレスポンスを作成
@@ -204,11 +301,59 @@ server.post('/api/streaming-data', async (request, reply) => {
  */
 server.get('/api/streaming-data', async (request, reply) => {
   try {
-    // クエリパラメータからプロンプトを取得
-    // GETリクエストではクエリパラメータを使用
-    const prompt = (request.query as any).prompt || 'こんにちは、AIアシスタントです。何かお手伝いできることはありますか？';
+    // クエリパラメータからプロンプトと参照ドキュメントを取得
+    const promptQuery = request.query as { prompt?: string, references?: string };
     
-    // セッションIDを生成
+    if (!promptQuery.prompt) {
+      reply.code(400).send({ error: 'Prompt is required' });
+      return;
+    }
+
+    const userPrompt = promptQuery.prompt;
+
+    // 参照ドキュメントがある場合はJSONとしてパース
+    let references: ReferenceDoc[] = [];
+    if (promptQuery.references) {
+      try {
+        references = JSON.parse(promptQuery.references);
+      } catch (e) {
+        console.warn('Failed to parse references:', e);
+      }
+    }
+
+    // メッセージ配列を作成
+    const userMessage = { role: 'user' as const, content: userPrompt };
+    let messageArray: Array<{ role: 'user' | 'assistant' | 'system', content: string }> = [userMessage];
+    
+    // システムプロンプトを追加
+    messageArray = addSystemPromptToMessages(messageArray, references);
+    
+    // デバッグ用：システムプロンプトと参照ドキュメント情報をログに出力
+    console.log('\n=== 参照ドキュメント情報 ===');
+    if (references && references.length > 0) {
+      console.log(`${references.length}件の参照ドキュメントが指定されています：`);
+      references.forEach((ref, idx) => {
+        console.log(`[${idx + 1}] ${ref.title} (${ref.url})`);
+        if (ref.content) {
+          console.log(`  内容プレビュー: ${ref.content.substring(0, 50)}...`);
+        }
+      });
+    } else {
+      console.log('参照ドキュメントはありません');
+    }
+    
+    // システムプロンプトを取得して出力
+    const systemMsg = messageArray.find(msg => msg.role === 'system');
+    if (systemMsg) {
+      console.log('\n=== システムプロンプト ===');
+      console.log(systemMsg.content);
+    }
+    
+    console.log('\n=== メッセージ配列 ===');
+    console.log(JSON.stringify(messageArray, null, 2));
+    console.log('========================\n');
+    
+    // セッションIDを生成（単純なタイムスタンプベース）
     const sessionId = `session_${Date.now()}`;
 
     // AWS認証情報が設定されているか確認
@@ -228,10 +373,14 @@ server.get('/api/streaming-data', async (request, reply) => {
     const customData = {
       timestamp: new Date().toISOString(),
       source: 'Vercel AI SDK Demo with AWS Bedrock',
-      prompt: prompt,
+      prompt: userPrompt,
       model: 'Claude 3 Sonnet',
       sessionId: sessionId,
-      references: [
+      references: references.length > 0 ? references.map(ref => ({
+        title: ref.title,
+        url: ref.url,
+        ...(ref.content ? { content: ref.content } : {})
+      })) : [
         { title: 'AWS Bedrock Documentation', url: 'https://docs.aws.amazon.com/bedrock/' },
         { title: 'Claude API Reference', url: 'https://docs.anthropic.com/claude/reference/' },
         { title: 'Fastify Documentation', url: 'https://www.fastify.io/docs/latest/' }
@@ -239,10 +388,9 @@ server.get('/api/streaming-data', async (request, reply) => {
     };
 
     // ストリーミングレスポンスを作成
-    // POSTエンドポイントと同様の処理だが、モデルが異なる
     const result = await streamText({
       model: bedrockProvider('anthropic.claude-3-sonnet-20240229-v1:0'), // Claude 3 Sonnetモデルを使用
-      messages: [{ role: 'user', content: prompt }],
+      messages: messageArray,
       // チャンク受信時に呼び出されるコールバック
       onChunk: ({ chunk }) => {
         if (chunk.type === 'text-delta') {
@@ -265,7 +413,7 @@ server.get('/api/streaming-data', async (request, reply) => {
           
           // 会話をファイルに保存
           const filePath = await saveConversationToFile(sessionId, conversationData);
-          console.log(`Conversation with prompt "${prompt.substring(0, 30)}..." saved to ${filePath}`);
+          console.log(`Conversation with prompt "${userPrompt.substring(0, 30)}..." saved to ${filePath}`);
         } catch (error) {
           console.error('Error saving conversation:', error);
         }
