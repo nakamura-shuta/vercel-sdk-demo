@@ -1,6 +1,6 @@
 import fastify from 'fastify';
 import cors from '@fastify/cors';
-import { streamText, createDataStreamResponse } from 'ai';
+import { streamText, createDataStreamResponse, Message, CoreMessage } from 'ai';
 import dotenv from 'dotenv';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { promises as fs } from 'fs';
@@ -53,7 +53,23 @@ server.register(cors, {
 server.post('/api/streaming-data', async (request, reply) => {
   try {
     // リクエストボディからプロンプトを取得
-    const { prompt } = request.body as { prompt: string };
+    const { prompt, messages } = request.body as { prompt?: string, messages?: Array<{ role: string, content: string }> };
+    
+    // プロンプトまたはメッセージが必要
+    if (!prompt && (!messages || messages.length === 0)) {
+      reply.code(400).send({ error: 'Prompt or messages is required' });
+      return;
+    }
+
+    // ユーザーの入力内容を取得（最後のメッセージまたはプロンプト）
+    const userInput = messages && messages.length > 0 
+      ? messages[messages.length - 1].content 
+      : (prompt as string);
+
+    // メッセージ配列を使用するか、プロンプトからメッセージ配列を作成
+    const messageArray = messages ? 
+      messages.map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })) : 
+      [{ role: 'user' as const, content: prompt as string }];
     
     // セッションIDを生成（単純なタイムスタンプベース）
     const sessionId = `session_${Date.now()}`;
@@ -76,7 +92,7 @@ server.post('/api/streaming-data', async (request, reply) => {
     const customData = {
       timestamp: new Date().toISOString(), // 現在のタイムスタンプ
       source: 'Vercel AI SDK Demo with AWS Bedrock',
-      prompt: prompt, // ユーザーのプロンプト
+      prompt: userInput, // ユーザーの入力内容
       model: 'Claude 3.5 Sonnet', // 使用しているモデル
       sessionId: sessionId, // セッションID
       references: [
@@ -93,7 +109,7 @@ server.post('/api/streaming-data', async (request, reply) => {
       // 'anthropic.claude-3-5-sonnet-20240620-v1:0'はAmazon Bedrock上のClaude 3.5 Sonnetモデル
       model: bedrockProvider('anthropic.claude-3-5-sonnet-20240620-v1:0'),
       // ユーザーからのメッセージを設定
-      messages: [{ role: 'user', content: prompt }],
+      messages: messageArray,
       // チャンク受信時に呼び出されるコールバック
       onChunk: ({ chunk }) => {
         if (chunk.type === 'text-delta') {
@@ -116,7 +132,7 @@ server.post('/api/streaming-data', async (request, reply) => {
           
           // 会話をファイルに保存
           const filePath = await saveConversationToFile(sessionId, conversationData);
-          console.log(`Conversation with prompt "${prompt.substring(0, 30)}..." saved to ${filePath}`);
+          console.log(`Conversation with prompt "${userInput.substring(0, 30)}..." saved to ${filePath}`);
         } catch (error) {
           console.error('Error saving conversation:', error);
         }
