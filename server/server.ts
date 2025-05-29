@@ -1,17 +1,37 @@
-import fastify from 'fastify';
-import cors from '@fastify/cors';
-import { streamText, createDataStreamResponse, Message, CoreMessage } from 'ai';
-import dotenv from 'dotenv';
-import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
-import { promises as fs } from 'fs';
-import path from 'path';
+/**
+ * Vercel AI SDK Demo Server with Amazon Bedrock
+ * 
+ * このサーバーは、Amazon Bedrockを使用してAIストリーミングレスポンスを提供する
+ * Fastifyベースのバックエンドサーバーです。
+ * 
+ * 主な機能:
+ * - Amazon Bedrock Claude 3/3.5モデルとの統合
+ * - リアルタイムストリーミングレスポンス
+ * - 会話履歴の保存とログ管理
+ * - 参照ドキュメントをコンテキストとして含める機能
+ * - CORS対応でフロントエンドからのアクセスを許可
+ */
+
+// 必要なライブラリのインポート
+import fastify from 'fastify'; // 高速なWebフレームワーク
+import cors from '@fastify/cors'; // Cross-Origin Resource Sharing (CORS) サポート
+import { streamText, createDataStreamResponse, Message, CoreMessage } from 'ai'; // Vercel AI SDK
+import dotenv from 'dotenv'; // 環境変数管理
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock'; // Amazon Bedrock統合
+import { promises as fs } from 'fs'; // ファイルシステム操作（非同期版）
+import path from 'path'; // パス操作ユーティリティ
 
 // 環境変数を読み込む
 dotenv.config();
 
+// Fastifyサーバーインスタンスを作成
 const server = fastify();
 
-// ログディレクトリの作成（存在しない場合）
+/**
+ * ログディレクトリの設定と作成
+ * 会話履歴を保存するためのディレクトリを作成
+ * recursive: trueにより、親ディレクトリも自動作成される
+ */
 const LOG_DIR = path.join(__dirname, 'logs');
 (async () => {
   try {
@@ -22,12 +42,14 @@ const LOG_DIR = path.join(__dirname, 'logs');
   }
 })();
 
-// プロンプトテンプレート関数
-// 参照ドキュメント情報と会話履歴を組み込んだプロンプトを生成
+/**
+ * 参照ドキュメントの型定義
+ * AIが回答する際に参考にする外部ドキュメントの情報を格納
+ */
 interface ReferenceDoc {
-  title: string;
-  url: string;
-  content?: string;
+  title: string;    // ドキュメントのタイトル
+  url: string;      // ドキュメントのURL
+  content?: string; // ドキュメントの内容（オプション）
 }
 
 /**
@@ -83,7 +105,15 @@ function addSystemPromptToMessages(
   }
 }
 
-// 会話履歴をファイルに保存する関数
+/**
+ * 会話履歴をファイルに保存する関数
+ * @param sessionId セッションID - 会話を識別するためのユニークID
+ * @param data 保存する会話データ（プロンプト、レスポンス、メタデータなど）
+ * @returns 保存されたファイルのパス、失敗時はnull
+ * 
+ * ファイル名形式: {sessionId}_{timestamp}.json
+ * タイムスタンプの':'は'-'に置換してファイルシステムに対応
+ */
 async function saveConversationToFile(sessionId: string, data: any) {
   try {
     const timestamp = new Date().toISOString().replace(/:/g, '-');
@@ -99,7 +129,16 @@ async function saveConversationToFile(sessionId: string, data: any) {
   }
 }
 
-// CORSを有効化
+/**
+ * CORS（Cross-Origin Resource Sharing）の設定
+ * フロントエンドアプリケーションからのクロスオリジンリクエストを許可
+ * 
+ * 設定内容:
+ * - origin: '*' - すべてのオリジンからのアクセスを許可（本番環境では制限推奨）
+ * - methods: HTTPメソッドの許可リスト
+ * - allowedHeaders: 許可するリクエストヘッダー
+ * - credentials: クッキーなどの認証情報の送信を許可
+ */
 server.register(cors, {
   origin: '*', // すべてのオリジンを許可
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -167,21 +206,44 @@ server.post('/api/streaming-data', async (request, reply) => {
     // セッションIDを生成（単純なタイムスタンプベース）
     const sessionId = `session_${Date.now()}`;
 
-    // AWS認証情報が設定されているか確認
+    /**
+     * AWS認証情報の検証
+     * 環境変数にAWSアクセスキーとシークレットキーが設定されているか確認
+     * 設定されていない場合は500エラーを返す
+     */
     if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
       reply.code(500).send({ error: 'AWS credentials are not set' });
       return;
     }
 
-    // Amazon Bedrockのプロバイダーを設定
-    // createAmazonBedrock関数を使用して、AWS認証情報を指定したプロバイダーインスタンスを作成
+    /**
+     * Amazon Bedrockプロバイダーの設定
+     * AWS認証情報を使用してBedrockサービスに接続するプロバイダーを作成
+     * 
+     * 設定パラメータ:
+     * - region: AWSリージョン（デフォルト: us-east-1）
+     * - accessKeyId: AWS IAMアクセスキーID
+     * - secretAccessKey: AWS IAMシークレットアクセスキー
+     */
     const bedrockProvider = createAmazonBedrock({
       region: process.env.AWS_REGION || 'us-east-1', // AWSリージョン
       accessKeyId: process.env.AWS_ACCESS_KEY_ID, // AWSアクセスキーID
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, // AWSシークレットアクセスキー
     });
 
-    // カスタムデータを作成（メタデータとして使用）
+    /**
+     * カスタムデータオブジェクトの作成
+     * ストリーミングレスポンスに含めるメタデータを定義
+     * このデータはクライアントサイドで追加情報として利用可能
+     * 
+     * 含まれるデータ:
+     * - timestamp: リクエスト処理開始時刻（ISO 8601形式）
+     * - source: システム識別子
+     * - prompt: ユーザーが入力したプロンプトテキスト
+     * - model: 使用するAIモデル名
+     * - sessionId: 会話セッションの一意識別子
+     * - references: 参照ドキュメント情報（デフォルト値付き）
+     */
     const customData = {
       timestamp: new Date().toISOString(), // 現在のタイムスタンプ
       source: 'Vercel AI SDK Demo with AWS Bedrock',
@@ -199,8 +261,17 @@ server.post('/api/streaming-data', async (request, reply) => {
       }))
     };
 
-    // ストリーミングレスポンスを作成
-    // streamText関数を使用して、AIモデルからのレスポンスをストリーミング形式で取得
+    /**
+     * AIストリーミングレスポンスの生成
+     * Vercel AI SDKのstreamText関数を使用して、
+     * Amazon Bedrock上のClaudeモデルからリアルタイムでレスポンスを取得
+     * 
+     * パラメータ:
+     * - model: 使用するAIモデル（Claude 3.5 Sonnet）
+     * - messages: システムプロンプトとユーザーメッセージを含む配列
+     * - onChunk: テキストチャンクを受信するたびに呼び出されるコールバック
+     * - onFinish: ストリーミング完了時に呼び出されるコールバック
+     */
     const result = await streamText({
       // bedrockProviderを使用して特定のモデルを指定
       // 'anthropic.claude-3-5-sonnet-20240620-v1:0'はAmazon Bedrock上のClaude 3.5 Sonnetモデル
@@ -236,7 +307,23 @@ server.post('/api/streaming-data', async (request, reply) => {
       }
     });
 
-    // Vercel AI SDKのレスポンスを作成
+    /**
+     * データストリームレスポンスの作成
+     * Vercel AI SDKのcreateDataStreamResponse関数を使用して、
+     * SSE（Server-Sent Events）形式のストリーミングレスポンスを生成
+     * 
+     * execute関数内の処理:
+     * 1. カスタムデータ（メタデータ）の送信
+     * 2. 処理開始のステータス通知
+     * 3. AIからのテキストストリームをマージ
+     * 
+     * headers:
+     * - Content-Type: SSE形式を指定
+     * - Cache-Control: キャッシュを無効化
+     * - Connection: 持続的接続を維持
+     * - CORS関連ヘッダー: クロスオリジンアクセスを許可
+     * - X-Accel-Buffering: Nginxのバッファリングを無効化
+     */
     const response = createDataStreamResponse({
       execute: async (dataStream) => {
         // カスタムデータを送信
@@ -387,7 +474,10 @@ server.get('/api/streaming-data', async (request, reply) => {
       ]
     };
 
-    // ストリーミングレスポンスを作成
+    /**
+     * AIストリーミングレスポンスの生成（GETエンドポイント用）
+     * Claude 3 Sonnetモデルを使用してレスポンスを生成
+     */
     const result = await streamText({
       model: bedrockProvider('anthropic.claude-3-sonnet-20240229-v1:0'), // Claude 3 Sonnetモデルを使用
       messages: messageArray,
@@ -420,7 +510,10 @@ server.get('/api/streaming-data', async (request, reply) => {
       }
     });
 
-    // データストリームレスポンスを作成
+    /**
+     * データストリームレスポンスの作成（GETエンドポイント用）
+     * EventSource APIを使用するクライアント向けのSSEレスポンスを生成
+     */
     const response = createDataStreamResponse({
       execute: async (dataStream) => {
         // カスタムデータを送信
@@ -478,7 +571,20 @@ server.get('/api/streaming-data', async (request, reply) => {
   }
 });
 
-// 会話履歴を取得するエンドポイント
+/**
+ * 会話履歴を取得するエンドポイント (GET /api/history)
+ * 保存された会話ログファイルから最新の履歴を取得
+ * 
+ * レスポンス:
+ * - 成功時: 最新10件の会話履歴を含む配列
+ * - エラー時: 500ステータスコードとエラーメッセージ
+ * 
+ * 処理の流れ:
+ * 1. ログディレクトリからすべてのJSONファイルを取得
+ * 2. ファイル名でソートして最新10件を選択
+ * 3. 各ファイルの内容を読み込んでJSONとしてパース
+ * 4. 配列として返す
+ */
 server.get('/api/history', async (request, reply) => {
   try {
     const files = await fs.readdir(LOG_DIR);
@@ -501,13 +607,31 @@ server.get('/api/history', async (request, reply) => {
   }
 });
 
-// 簡単なヘルスチェックエンドポイント
-// サーバーが稼働しているかを確認するためのシンプルなエンドポイント
+/**
+ * ヘルスチェックエンドポイント (GET /)
+ * サーバーの稼働状態を確認するためのシンプルなエンドポイント
+ * 
+ * レスポンス:
+ * - status: 'ok' - サーバーが正常に稼働していることを示す
+ * - message: サーバーの状態メッセージ
+ * 
+ * 用途: モニタリングツールやロードバランサーのヘルスチェックに使用
+ */
 server.get('/', async (request, reply) => {
   reply.send({ status: 'ok', message: 'Server is running' });
 });
 
-// サーバーを起動
+/**
+ * サーバー起動関数
+ * Fastifyサーバーを指定されたポートとホストで起動
+ * 
+ * 設定:
+ * - port: 3001 - サーバーがリッスンするポート番号
+ * - host: '0.0.0.0' - すべてのネットワークインターフェースでリッスン
+ * 
+ * エラーハンドリング:
+ * - 起動に失敗した場合はエラーをログに出力してプロセスを終了
+ */
 const start = async () => {
   try {
     await server.listen({ port: 3001, host: '0.0.0.0' });
@@ -519,4 +643,5 @@ const start = async () => {
   }
 };
 
+// サーバーを起動
 start(); 
