@@ -1,0 +1,53 @@
+name: Claude Issue Labeler
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+  id-token: write
+
+jobs:
+  labeler:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Claudeでラベル提案
+        id: claude-labels
+        uses: anthropics/claude-code-action@beta
+        with:
+          model: "arn:aws:bedrock:us-east-1:511688388644:inference-profile/us.anthropic.claude-opus-4-20250514-v1:0"
+          use_bedrock: "true"
+          github_token: ${{ steps.app-token.outputs.token }}
+          prompt: |
+            このIssueの内容を分析し、プロジェクトのCLAUDE.mdのルールに従って、適切なGitHubラベルを最大3つまで提案してください。ラベル名のみをカンマ区切りで出力してください。
+
+      - name: ラベルを付与
+        if: steps.claude-labels.outputs.result != ''
+        run: |
+          LABELS=$(echo "${{ steps.claude-labels.outputs.result }}" | tr -d '\n')
+          echo "提案されたラベル: $LABELS"
+          for label in $(echo $LABELS | tr ',' '\n'); do
+            gh issue edit ${{ github.event.issue.number }} --add-label "$label"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }} 
