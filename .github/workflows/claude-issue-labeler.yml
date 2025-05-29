@@ -40,6 +40,8 @@ jobs:
           github_token: ${{ steps.app-token.outputs.token }}
           prompt: |
             このIssueの内容を分析し、プロジェクトのCLAUDE.mdのルールに従って、適切なGitHubラベルを最大3つまで提案してください。ラベル名のみをカンマ区切りで出力してください。
+          custom_instructions: |
+            このIssueの内容を分析し、プロジェクトのCLAUDE.mdのルールに従って、適切なGitHubラベルを最大3つまで提案してください。ラベル名のみをカンマ区切りで出力してください。
 
       - name: ラベルを付与
         if: steps.claude-labels.outputs.result != ''
