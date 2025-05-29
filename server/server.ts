@@ -26,6 +26,7 @@ dotenv.config();
 
 // Fastifyサーバーインスタンスを作成
 const server = fastify();
+console.log('[DEBUG] Fastifyサーバーインスタンスを作成しました');
 
 /**
  * ログディレクトリの設定と作成
@@ -145,12 +146,14 @@ server.register(cors, {
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 });
+console.log('[DEBUG] CORSミドルウェアを登録しました');
 
 /**
  * ストリーミングデータのエンドポイント (POST)
  * クライアントからのPOSTリクエストを処理し、Amazon Bedrockを使用してAIレスポンスをストリーミングで返す
  */
 server.post('/api/streaming-data', async (request, reply) => {
+  console.log('[DEBUG] POST /api/streaming-data エンドポイントにリクエストを受信しました');
   try {
     // リクエストボディからプロンプト、メッセージ、参照ドキュメントを取得
     const { prompt, messages, references } = request.body as { 
@@ -161,9 +164,11 @@ server.post('/api/streaming-data', async (request, reply) => {
     
     // プロンプトまたはメッセージが必要
     if (!prompt && (!messages || messages.length === 0)) {
+      console.log('[DEBUG] リクエストにpromptまたはmessagesが含まれていません');
       reply.code(400).send({ error: 'Prompt or messages is required' });
       return;
     }
+    console.log('[DEBUG] リクエスト検証完了 - prompt/messages確認済み');
 
     // ユーザーの入力内容を取得（最後のメッセージまたはプロンプト）
     const userInput = messages && messages.length > 0 
@@ -211,10 +216,13 @@ server.post('/api/streaming-data', async (request, reply) => {
      * 環境変数にAWSアクセスキーとシークレットキーが設定されているか確認
      * 設定されていない場合は500エラーを返す
      */
+    console.log('[DEBUG] AWS認証情報を確認中...');
     if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      console.log('[DEBUG] AWS認証情報が設定されていません');
       reply.code(500).send({ error: 'AWS credentials are not set' });
       return;
     }
+    console.log('[DEBUG] AWS認証情報確認完了');
 
     /**
      * Amazon Bedrockプロバイダーの設定
@@ -225,11 +233,13 @@ server.post('/api/streaming-data', async (request, reply) => {
      * - accessKeyId: AWS IAMアクセスキーID
      * - secretAccessKey: AWS IAMシークレットアクセスキー
      */
+    console.log(`[DEBUG] Amazon Bedrockプロバイダーを初期化中... (リージョン: ${process.env.AWS_REGION || 'us-east-1'})`);
     const bedrockProvider = createAmazonBedrock({
       region: process.env.AWS_REGION || 'us-east-1', // AWSリージョン
       accessKeyId: process.env.AWS_ACCESS_KEY_ID, // AWSアクセスキーID
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, // AWSシークレットアクセスキー
     });
+    console.log('[DEBUG] Amazon Bedrockプロバイダー初期化完了');
 
     /**
      * カスタムデータオブジェクトの作成
@@ -272,6 +282,7 @@ server.post('/api/streaming-data', async (request, reply) => {
      * - onChunk: テキストチャンクを受信するたびに呼び出されるコールバック
      * - onFinish: ストリーミング完了時に呼び出されるコールバック
      */
+    console.log('[DEBUG] AIストリーミングレスポンス生成を開始します...');
     const result = await streamText({
       // bedrockProviderを使用して特定のモデルを指定
       // 'anthropic.claude-3-5-sonnet-20240620-v1:0'はAmazon Bedrock上のClaude 3.5 Sonnetモデル
@@ -281,11 +292,12 @@ server.post('/api/streaming-data', async (request, reply) => {
       // チャンク受信時に呼び出されるコールバック
       onChunk: ({ chunk }) => {
         if (chunk.type === 'text-delta') {
-          console.log(`Received text chunk: ${chunk.textDelta.substring(0, 20)}...`);
+          console.log(`[DEBUG] テキストチャンク受信: ${chunk.textDelta.substring(0, 20)}...`);
         }
       },
       // ストリーミング完了時に呼び出されるコールバック
       onFinish: async ({ response }) => {
+        console.log('[DEBUG] ストリーミング完了 - 会話データを保存中...');
         try {
           // 最後のメッセージ（AIの応答）を取得
           const assistantMessage = response.messages.find(msg => msg.role === 'assistant');
@@ -300,9 +312,9 @@ server.post('/api/streaming-data', async (request, reply) => {
           
           // 会話をファイルに保存
           const filePath = await saveConversationToFile(sessionId, conversationData);
-          console.log(`Conversation with prompt "${userInput.substring(0, 30)}..." saved to ${filePath}`);
+          console.log(`[DEBUG] 会話保存完了: "${userInput.substring(0, 30)}..." -> ${filePath}`);
         } catch (error) {
-          console.error('Error saving conversation:', error);
+          console.error('[DEBUG] 会話保存エラー:', error);
         }
       }
     });
@@ -376,7 +388,7 @@ server.post('/api/streaming-data', async (request, reply) => {
     }
     
   } catch (error) {
-    console.error('Error:', error);
+    console.error('[DEBUG] POST: エラー発生:', error);
     reply.code(500).send({ error: 'An error occurred while processing the request' });
   }
 });
@@ -387,14 +399,17 @@ server.post('/api/streaming-data', async (request, reply) => {
  * クライアント側でEventSourceを使用する場合に利用される
  */
 server.get('/api/streaming-data', async (request, reply) => {
+  console.log('[DEBUG] GET /api/streaming-data エンドポイントにリクエストを受信しました');
   try {
     // クエリパラメータからプロンプトと参照ドキュメントを取得
     const promptQuery = request.query as { prompt?: string, references?: string };
     
     if (!promptQuery.prompt) {
+      console.log('[DEBUG] GETリクエストにpromptパラメータが含まれていません');
       reply.code(400).send({ error: 'Prompt is required' });
       return;
     }
+    console.log('[DEBUG] GETリクエスト検証完了 - prompt確認済み');
 
     const userPrompt = promptQuery.prompt;
 
@@ -444,17 +459,22 @@ server.get('/api/streaming-data', async (request, reply) => {
     const sessionId = `session_${Date.now()}`;
 
     // AWS認証情報が設定されているか確認
+    console.log('[DEBUG] GET: AWS認証情報を確認中...');
     if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      console.log('[DEBUG] GET: AWS認証情報が設定されていません');
       reply.code(500).send({ error: 'AWS credentials are not set' });
       return;
     }
+    console.log('[DEBUG] GET: AWS認証情報確認完了');
 
     // Amazon Bedrockのプロバイダーを設定
+    console.log(`[DEBUG] GET: Amazon Bedrockプロバイダーを初期化中... (リージョン: ${process.env.AWS_REGION || 'us-east-1'})`);
     const bedrockProvider = createAmazonBedrock({
       region: process.env.AWS_REGION || 'us-east-1',
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     });
+    console.log('[DEBUG] GET: Amazon Bedrockプロバイダー初期化完了');
 
     // カスタムデータを作成
     const customData = {
@@ -478,17 +498,19 @@ server.get('/api/streaming-data', async (request, reply) => {
      * AIストリーミングレスポンスの生成（GETエンドポイント用）
      * Claude 3 Sonnetモデルを使用してレスポンスを生成
      */
+    console.log('[DEBUG] GET: AIストリーミングレスポンス生成を開始します...');
     const result = await streamText({
       model: bedrockProvider('anthropic.claude-3-sonnet-20240229-v1:0'), // Claude 3 Sonnetモデルを使用
       messages: messageArray,
       // チャンク受信時に呼び出されるコールバック
       onChunk: ({ chunk }) => {
         if (chunk.type === 'text-delta') {
-          console.log(`Received text chunk: ${chunk.textDelta.substring(0, 20)}...`);
+          console.log(`[DEBUG] GET: テキストチャンク受信: ${chunk.textDelta.substring(0, 20)}...`);
         }
       },
       // ストリーミング完了時に呼び出されるコールバック
       onFinish: async ({ response }) => {
+        console.log('[DEBUG] GET: ストリーミング完了 - 会話データを保存中...');
         try {
           // 最後のメッセージ（AIの応答）を取得
           const assistantMessage = response.messages.find(msg => msg.role === 'assistant');
@@ -503,9 +525,9 @@ server.get('/api/streaming-data', async (request, reply) => {
           
           // 会話をファイルに保存
           const filePath = await saveConversationToFile(sessionId, conversationData);
-          console.log(`Conversation with prompt "${userPrompt.substring(0, 30)}..." saved to ${filePath}`);
+          console.log(`[DEBUG] GET: 会話保存完了: "${userPrompt.substring(0, 30)}..." -> ${filePath}`);
         } catch (error) {
-          console.error('Error saving conversation:', error);
+          console.error('[DEBUG] GET: 会話保存エラー:', error);
         }
       }
     });
@@ -566,7 +588,7 @@ server.get('/api/streaming-data', async (request, reply) => {
     }
     
   } catch (error) {
-    console.error('Error:', error);
+    console.error('[DEBUG] GET: エラー発生:', error);
     reply.code(500).send({ error: 'An error occurred while processing the request' });
   }
 });
@@ -586,23 +608,29 @@ server.get('/api/streaming-data', async (request, reply) => {
  * 4. 配列として返す
  */
 server.get('/api/history', async (request, reply) => {
+  console.log('[DEBUG] GET /api/history エンドポイントにリクエストを受信しました');
   try {
+    console.log('[DEBUG] HISTORY: ログディレクトリからファイル一覧を取得中...');
     const files = await fs.readdir(LOG_DIR);
     const jsonFiles = files.filter(file => file.endsWith('.json'));
+    console.log(`[DEBUG] HISTORY: ${jsonFiles.length}件のJSONファイルを発見`);
     
     // 最新の10件のみ返す
     const recentFiles = jsonFiles.sort().reverse().slice(0, 10);
+    console.log(`[DEBUG] HISTORY: 最新${recentFiles.length}件のファイルを処理します`);
     
     const history = [];
     for (const file of recentFiles) {
       const filePath = path.join(LOG_DIR, file);
+      console.log(`[DEBUG] HISTORY: ファイル読み込み中: ${file}`);
       const content = await fs.readFile(filePath, 'utf8');
       history.push(JSON.parse(content));
     }
     
+    console.log(`[DEBUG] HISTORY: ${history.length}件の履歴を返します`);
     reply.send(history);
   } catch (error) {
-    console.error('Error retrieving history:', error);
+    console.error('[DEBUG] HISTORY: エラー発生:', error);
     reply.code(500).send({ error: 'Failed to retrieve conversation history' });
   }
 });
@@ -618,6 +646,7 @@ server.get('/api/history', async (request, reply) => {
  * 用途: モニタリングツールやロードバランサーのヘルスチェックに使用
  */
 server.get('/', async (request, reply) => {
+  console.log('[DEBUG] GET / (ヘルスチェック) エンドポイントにリクエストを受信しました');
   reply.send({ status: 'ok', message: 'Server is running' });
 });
 
@@ -633,15 +662,19 @@ server.get('/', async (request, reply) => {
  * - 起動に失敗した場合はエラーをログに出力してプロセスを終了
  */
 const start = async () => {
+  console.log('[DEBUG] サーバー起動処理を開始します...');
   try {
+    console.log('[DEBUG] サーバーをポート3001でリッスン開始...');
     await server.listen({ port: 3001, host: '0.0.0.0' });
+    console.log('[DEBUG] サーバー起動完了!');
     console.log('Server is running on http://localhost:3001');
     console.log(`Conversation logs will be saved to ${LOG_DIR}`);
   } catch (err) {
-    console.error(err);
+    console.error('[DEBUG] サーバー起動エラー:', err);
     process.exit(1);
   }
 };
 
 // サーバーを起動
+console.log('[DEBUG] サーバー起動関数を呼び出します');
 start(); 
