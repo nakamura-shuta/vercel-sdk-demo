@@ -38,8 +38,6 @@ jobs:
           model: "arn:aws:bedrock:us-east-1:511688388644:inference-profile/us.anthropic.claude-opus-4-20250514-v1:0"
           use_bedrock: "true"
           github_token: ${{ steps.app-token.outputs.token }}
-          prompt: |
-            このIssueの内容を分析し、プロジェクトのCLAUDE.mdのルールに従って、適切なGitHubラベルを最大3つまで提案してください。ラベル名のみをカンマ区切りで出力してください。
           custom_instructions: |
             このIssueの内容を分析し、プロジェクトのCLAUDE.mdのルールに従って、適切なGitHubラベルを最大3つまで提案してください。ラベル名のみをカンマ区切りで出力してください。
 
